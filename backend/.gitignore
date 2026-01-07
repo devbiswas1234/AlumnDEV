@@ -1,0 +1,12 @@
+# Node / frontend
+node_modules/
+dist/
+.env
+
+# Optional logs
+logs/
+*.log
+
+# Optional OS files
+.DS_Store
+Thumbs.db
