@@ -14,6 +14,11 @@ import AlumniProfile from "./pages/AlumniProfile.jsx";
 import MentorshipRequests from "./pages/MentorshipRequests";
 import MyMentorships from "./pages/MyMentorships";
 import AcceptedMentorships from "./pages/AcceptedMentorships";
+import AdminVerifyAlumni from "./pages/AdminVerifyAlumni";
+import AdminDashboard from "./pages/AdminDashboard";
+import AdminLayout from "./layouts/AdminLayout";
+import AlumniApprovals from "./pages/AlumniApprovals";
+import AnalyticsDashboard from "./pages/AnalyticsDashboard";
 
 import Navbar from "./components/Navbar.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
@@ -98,7 +103,31 @@ function App() {
             </ProtectedRoute>
           }
         />
+        <Route path="/admin" element={<AdminDashboard />} />
+        
+        <Route path="/admin" element={<AdminLayout />}>
+          <Route index element={<AdminDashboard />} />
+          <Route path="alumni-approvals" element={<AlumniApprovals />} />
+        </Route>
 
+        <Route
+          path="/analytics"
+          element={
+            <ProtectedRoute>
+              <AnalyticsDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/admin/verify-alumni"
+          element={
+            <ProtectedRoute role="ADMIN">
+              <AdminVerifyAlumni />
+            </ProtectedRoute>
+          }
+        />
+        
         {/* Student only */}
         <Route
           path="/jobs"

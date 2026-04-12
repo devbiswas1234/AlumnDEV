@@ -40,17 +40,17 @@ export default function ApplyJob() {
     }
   };
 
-  if (error) return <p className="p-6 text-red-600">{error}</p>;
-  if (!job) return <p className="p-6">Loading job...</p>;
+  if (error) return <p className="p-6 text-red-500">{error}</p>;
+  if (!job) return <p className="p-6 text-gray-400">Loading job...</p>;
 
   return (
-    <div className="p-6 max-w-md mx-auto">
-      <h1 className="text-xl font-bold mb-4">{job.title}</h1>
-      <p className="mb-1"><strong>Company:</strong> {job.company}</p>
-      <p className="mb-3">{job.description}</p>
+    <div className="p-8 max-w-md mx-auto bg-gray-800 border border-gray-700 shadow-xl rounded-lg mt-10">
+      <h1 className="text-2xl font-bold mb-4 text-white">{job.title}</h1>
+      <p className="mb-2 text-gray-300"><strong className="text-white">Company:</strong> {job.company}</p>
+      <p className="mb-6 text-gray-400">{job.description}</p>
 
       <input
-        className="w-full border p-2 rounded mb-3"
+        className="input mb-4"
         placeholder="Resume URL (optional)"
         value={resumeUrl}
         onChange={e => setResumeUrl(e.target.value)}
@@ -59,7 +59,7 @@ export default function ApplyJob() {
       <button
         onClick={apply}
         disabled={loading}
-        className="bg-blue-600 text-white px-4 py-2 rounded w-full"
+        className="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2.5 rounded-md w-full font-medium mt-2 disabled:opacity-50"
       >
         {loading ? "Applying..." : "Apply"}
       </button>

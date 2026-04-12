@@ -7,6 +7,17 @@ function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // 🔥 ADD THIS
+  const refreshUser = async () => {
+    try {
+      const res = await api.get("/auth/me");
+      setUser(res.data.user);
+    } catch (err) {
+      console.error("Failed to refresh user", err);
+      setUser(null);
+    }
+  };
+
   useEffect(() => {
     const token = localStorage.getItem("token");
 
@@ -34,6 +45,7 @@ function AuthProvider({ children }) {
   const value = {
     user,
     setUser,
+    refreshUser, // 🔥 EXPOSE IT HERE
     loading,
     logout,
   };

@@ -224,6 +224,44 @@ router.get("/search", requireAuth(), async (req, res) => {
 });
 
 /**
+ * GET profile analytics (ALUMNI only)
+ */
+router.get("/analytics", requireAuth("ALUMNI"), async (req, res) => {
+  const userId = req.user.id;
+
+  const views = await pool.query(
+    `SELECT COUNT(*) FROM profile_views WHERE alumni_id=$1`,
+    [userId]
+  );
+
+  res.json({
+    analytics: {
+      totalViews: Number(views.rows[0].count),
+      pendingRequests: 0,
+      acceptedRequests: 0,
+      rejectedRequests: 0
+    }
+  });
+});
+
+// MUST be ABOVE "/:id"
+router.get("/me", requireAuth("ALUMNI"), async (req, res) => {
+  const result = await pool.query(
+    `
+    SELECT id, name, email, batch, degree, location
+    FROM users
+    WHERE id = $1 AND role = 'ALUMNI'
+    `,
+    [req.user.id]
+  );
+
+  if (!result.rows.length)
+    return res.status(404).json({ error: "Alumni not found" });
+
+  res.json({ profile: result.rows[0] });
+});
+
+/**
  * GET alumni profile by ID
  */
 router.get("/:id", requireAuth(), async (req, res) => {
@@ -263,47 +301,7 @@ router.get("/:id", requireAuth(), async (req, res) => {
   }
 
   res.json({ profile });
-});
-
-/**
- * GET profile analytics (ALUMNI only)
- */
-router.get("/analytics", requireAuth("ALUMNI"), async (req, res) => {
-  const alumniId = req.user.id;
-
-  try {
-    // 1️⃣ Profile Views
-    const { rows: viewsRows } = await pool.query(
-      `SELECT COUNT(*) AS total_views 
-       FROM profile_views 
-       WHERE alumni_id = $1`,
-      [alumniId]
-    );
-
-    // 2️⃣ Mentorship Requests
-    const { rows: requestsRows } = await pool.query(
-      `SELECT 
-         COUNT(*) FILTER (WHERE status='PENDING') AS pending,
-         COUNT(*) FILTER (WHERE status='ACCEPTED') AS accepted,
-         COUNT(*) FILTER (WHERE status='REJECTED') AS rejected
-       FROM mentorship_requests
-       WHERE alumni_id = $1`,
-      [alumniId]
-    );
-
-    res.json({
-      analytics: {
-        totalViews: parseInt(viewsRows[0].total_views, 10),
-        pendingRequests: parseInt(requestsRows[0].pending, 10),
-        acceptedRequests: parseInt(requestsRows[0].accepted, 10),
-        rejectedRequests: parseInt(requestsRows[0].rejected, 10),
-      },
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to fetch analytics" });
-  }
-});
+}); 
 
 /**
  * GET suggested mentors for a student based on topics
@@ -342,6 +340,89 @@ router.get("/suggestions", requireAuth("STUDENT"), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch suggestions" });
+  }
+});
+ 
+router.put("/me", requireAuth("ALUMNI"), async (req, res) => {
+  const {
+    name,
+    batch,
+    degree,
+    location,
+    photo_url,
+    bio,
+    department,
+    passing_year,
+    company,
+    designation,
+    linkedin_url,
+    available_for_mentorship,
+  } = req.body;
+
+  try {
+    /* 🔹 UPDATE USERS TABLE */
+    await pool.query(
+      `
+      UPDATE users
+      SET name=$1, batch=$2, degree=$3, location=$4
+      WHERE id=$5 AND role='ALUMNI'
+      `,
+      [name, batch, degree, location, req.user.id]
+    );
+    await pool.query(
+      `
+      UPDATE alumni_profiles
+      SET name=$1, batch=$2, degree=$3, location=$4
+      WHERE id=$5 AND role='ALUMNI'
+      `,
+      [name, batch, degree, location, req.user.id]
+    );
+
+    /* 🔹 UPSERT ALUMNI PROFILE */
+    const result = await pool.query(
+      `
+      INSERT INTO alumni_profile
+      (
+        user_id,
+        photo_url,
+        bio,
+        department,
+        passing_year,
+        company,
+        designation,
+        linkedin_url,
+        available_for_mentorship
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        photo_url=EXCLUDED.photo_url,
+        bio=EXCLUDED.bio,
+        department=EXCLUDED.department,
+        passing_year=EXCLUDED.passing_year,
+        company=EXCLUDED.company,
+        designation=EXCLUDED.designation,
+        linkedin_url=EXCLUDED.linkedin_url,
+        available_for_mentorship=EXCLUDED.available_for_mentorship
+      RETURNING *
+      `,
+      [
+        req.user.id,
+        photo_url,
+        bio,
+        department,
+        passing_year,
+        company,
+        designation,
+        linkedin_url,
+        available_for_mentorship,
+      ]
+    );
+
+    res.json({ profile: result.rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update alumni profile" });
   }
 });
 

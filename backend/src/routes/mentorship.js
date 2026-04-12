@@ -1,21 +1,51 @@
 import express from "express";
 import { pool } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { COOLDOWN_DAYS } from "../controllers/mentorship.js";
 
 const router = express.Router();
 
 /**
- * Check if alumni is available for mentorship
+ * Check if alumni is verified & available for mentorship
  */
 const checkAlumniAvailability = async (alumniId) => {
   const { rows } = await pool.query(
-    `SELECT available_for_mentorship, max_mentees
-     FROM alumni_profiles
-     WHERE user_id = $1`,
+    `
+    SELECT verified, available_for_mentorship, max_mentees
+    FROM alumni_profiles
+    WHERE user_id = $1
+    `,
     [alumniId]
   );
+
   if (!rows.length) return null;
   return rows[0];
+};
+
+/**
+ * Check cooldown between a student & alumni
+ */
+const checkMentorshipCooldown = async (studentId, alumniId) => {
+  const { rows } = await pool.query(
+    `
+    SELECT last_action_at
+    FROM mentorship_requests
+    WHERE student_id = $1
+      AND alumni_id = $2
+      AND last_action_at IS NOT NULL
+    ORDER BY last_action_at DESC
+    LIMIT 1
+    `,
+    [studentId, alumniId]
+  );
+
+  if (!rows.length) return false;
+
+  const lastAction = rows[0].last_action_at;
+  const diffDays =
+    (Date.now() - new Date(lastAction)) / (1000 * 60 * 60 * 24);
+
+  return diffDays < COOLDOWN_DAYS;
 };
 
 /**
@@ -27,28 +57,61 @@ router.post("/request/:alumniId", requireAuth("STUDENT"), async (req, res) => {
   const alumniId = req.params.alumniId;
 
   try {
+    // 1️⃣ COOLDOWN CHECK
+    const isOnCooldown = await checkMentorshipCooldown(
+      studentId,
+      alumniId
+    );
+
+    if (isOnCooldown) {
+      return res.status(400).json({
+        message: "You must wait before requesting mentorship again"
+      });
+    }
+
+    // 2️⃣ Check alumni availability
     const profile = await checkAlumniAvailability(alumniId);
 
-    if (!profile || !profile.available_for_mentorship) {
-      return res.status(400).json({ message: "Alumni not available for mentorship" });
+    // Alumni must exist & be verified
+    if (!profile || !profile.verified) {
+      return res.status(400).json({
+        message: "Alumni is not verified yet"
+      });
     }
 
-    // Check if request already exists
+    // Alumni must be available
+    if (!profile.available_for_mentorship) {
+      return res.status(400).json({
+        message: "Alumni is not available for mentorship"
+      });
+    }
+
+    // 3️⃣ Check if request already exists
     const { rows: existing } = await pool.query(
-      `SELECT 1 FROM mentorship_requests WHERE student_id=$1 AND alumni_id=$2`,
+      `
+      SELECT 1
+      FROM mentorship_requests
+      WHERE student_id = $1 AND alumni_id = $2
+      `,
       [studentId, alumniId]
     );
+
     if (existing.length) {
-      return res.status(400).json({ message: "You have already sent a request to this alumni" });
+      return res.status(400).json({
+        message: "You have already sent a request to this alumni"
+      });
     }
 
-    // Count currently accepted mentees
+    // 4️⃣ Count currently accepted mentees
     const { rows: countRows } = await pool.query(
-      `SELECT COUNT(*) AS accepted_count
-       FROM mentorship_requests
-       WHERE alumni_id=$1 AND status='ACCEPTED'`,
+      `
+      SELECT COUNT(*) AS accepted_count
+      FROM mentorship_requests
+      WHERE alumni_id = $1 AND status = 'ACCEPTED'
+      `,
       [alumniId]
     );
+
     const acceptedCount = parseInt(countRows[0].accepted_count, 10);
 
     let status = "PENDING";
@@ -56,33 +119,45 @@ router.post("/request/:alumniId", requireAuth("STUDENT"), async (req, res) => {
 
     if (acceptedCount >= profile.max_mentees) {
       status = "QUEUED";
+
       // Assign queue position
       const { rows: queueRows } = await pool.query(
-        `SELECT COALESCE(MAX(queue_position), 0)+1 AS position
-         FROM mentorship_requests
-         WHERE alumni_id=$1 AND status='QUEUED'`,
+        `
+        SELECT COALESCE(MAX(queue_position), 0) + 1 AS position
+        FROM mentorship_requests
+        WHERE alumni_id = $1 AND status = 'QUEUED'
+        `,
         [alumniId]
       );
+
       queuePosition = queueRows[0].position;
     }
 
+    // 5️⃣ Create mentorship request
     const { rows: requestRows } = await pool.query(
-      `INSERT INTO mentorship_requests
+      `
+      INSERT INTO mentorship_requests
         (student_id, alumni_id, status, queue_position, created_at)
-       VALUES ($1,$2,$3,$4,NOW())
-       RETURNING *`,
+      VALUES ($1, $2, $3, $4, NOW())
+      RETURNING *
+      `,
       [studentId, alumniId, status, queuePosition]
     );
 
-    // 🔔 Notify student
+    // 6️⃣ Notify student
     await pool.query(
-      `INSERT INTO notifications (user_id, type, message)
-       VALUES ($1, 'MENTORSHIP_${status}', $2)`,
+      `
+      INSERT INTO notifications (user_id, type, message)
+      VALUES ($1, $2)
+      `,
       [
         studentId,
         status === "QUEUED"
+          ? "MENTORSHIP_QUEUED"
+          : "MENTORSHIP_PENDING",
+        status === "QUEUED"
           ? "Mentor is full, you are added to the queue"
-          : "Your mentorship request has been sent",
+          : "Your mentorship request has been sent"
       ]
     );
 
@@ -101,12 +176,14 @@ router.get("/incoming", requireAuth("ALUMNI"), async (req, res) => {
     const alumniId = req.user.id;
 
     const { rows } = await pool.query(
-      `SELECT m.id, m.status, m.created_at,
-              u.name AS student_name, u.email AS student_email
-       FROM mentorship_requests m
-       JOIN users u ON u.id = m.student_id
-       WHERE m.alumni_id=$1 AND m.status='PENDING'
-       ORDER BY m.created_at DESC`,
+      `
+      SELECT m.id, m.status, m.created_at,
+             u.name AS student_name, u.email AS student_email
+      FROM mentorship_requests m
+      JOIN users u ON u.id = m.student_id
+      WHERE m.alumni_id=$1 AND m.status='PENDING'
+      ORDER BY m.created_at DESC
+      `,
       [alumniId]
     );
 
@@ -116,52 +193,105 @@ router.get("/incoming", requireAuth("ALUMNI"), async (req, res) => {
     res.status(500).json({ message: "Failed to fetch requests" });
   }
 });
-
-/**
- * ACCEPT mentorship (ALUMNI only)
- * Moves queued requests to pending if spot opens
- */
 router.post("/:id/accept", requireAuth("ALUMNI"), async (req, res) => {
   const alumniId = req.user.id;
   const requestId = req.params.id;
 
   try {
+    // 1️⃣ Count active accepted mentees
+    const { rows: countRows } = await pool.query(
+      `
+      SELECT COUNT(*)
+      FROM mentorship_requests
+      WHERE alumni_id = $1 AND status = 'ACCEPTED'
+      `,
+      [alumniId]
+    );
+
+    if (Number(countRows[0].count) >= 5) {
+      return res.status(400).json({
+        message: "Mentorship limit reached"
+      });
+    }
+
+    // 2️⃣ Accept mentorship request
     const { rows: resultRows } = await pool.query(
-      `UPDATE mentorship_requests
-       SET status='ACCEPTED', queue_position=NULL
-       WHERE id=$1 AND alumni_id=$2 AND status='PENDING'
-       RETURNING student_id`,
+      `
+      UPDATE mentorship_requests
+      SET status='ACCEPTED',
+          queue_position=NULL,
+          last_action_at = NOW()
+      WHERE id=$1 AND alumni_id=$2 AND status='PENDING'
+      RETURNING student_id
+      `,
       [requestId, alumniId]
     );
-    if (!resultRows.length) return res.status(404).json({ message: "Request not found" });
+
+    if (!resultRows.length) {
+      return res.status(404).json({ message: "Request not found" });
+    }
 
     const studentId = resultRows[0].student_id;
 
-    // Notify student
+    // 3️⃣ Notify student
     await pool.query(
-      `INSERT INTO notifications (user_id, type, message)
-       VALUES ($1,'MENTORSHIP_ACCEPTED','Your mentorship request has been accepted')`,
+      `
+      INSERT INTO notifications (user_id, type, message)
+      VALUES ($1, 'MENTORSHIP_ACCEPTED', 'Your mentorship request has been accepted')
+      `,
       [studentId]
     );
 
-    // Move first queued request (if any) to pending
+    // 4️⃣ Auto-disable alumni availability if limit reached
+    const { rows: finalCount } = await pool.query(
+      `
+      SELECT COUNT(*)
+      FROM mentorship_requests
+      WHERE alumni_id = $1 AND status = 'ACCEPTED'
+      `,
+      [alumniId]
+    );
+
+    if (Number(finalCount[0].count) >= 5) {
+      await pool.query(
+        `
+        UPDATE alumni_profiles
+        SET available_for_mentorship = FALSE
+        WHERE user_id = $1
+        `,
+        [alumniId]
+      );
+    }
+
+    // 5️⃣ Promote next queued request (if any)
     const { rows: queuedRows } = await pool.query(
-      `SELECT id, student_id FROM mentorship_requests
-       WHERE alumni_id=$1 AND status='QUEUED'
-       ORDER BY queue_position ASC
-       LIMIT 1`,
+      `
+      SELECT id, student_id
+      FROM mentorship_requests
+      WHERE alumni_id=$1 AND status='QUEUED'
+      ORDER BY queue_position ASC
+      LIMIT 1
+      `,
       [alumniId]
     );
 
     if (queuedRows.length) {
       const nextQueued = queuedRows[0];
+
       await pool.query(
-        `UPDATE mentorship_requests SET status='PENDING', queue_position=NULL WHERE id=$1`,
+        `
+        UPDATE mentorship_requests
+        SET status='PENDING', queue_position=NULL
+        WHERE id=$1
+        `,
         [nextQueued.id]
       );
+
       await pool.query(
-        `INSERT INTO notifications (user_id, type, message)
-         VALUES ($1,'MENTORSHIP_PENDING','A spot opened up, your request is now pending')`,
+        `
+        INSERT INTO notifications (user_id, type, message)
+        VALUES ($1, 'MENTORSHIP_PENDING', 'A spot opened up, your request is now pending')
+        `,
         [nextQueued.student_id]
       );
     }
@@ -172,29 +302,34 @@ router.post("/:id/accept", requireAuth("ALUMNI"), async (req, res) => {
     res.status(500).json({ message: "Accept failed" });
   }
 });
-
-/**
- * REJECT mentorship (ALUMNI only)
- */
 router.post("/:id/reject", requireAuth("ALUMNI"), async (req, res) => {
   const alumniId = req.user.id;
   const requestId = req.params.id;
 
   try {
     const { rows: resultRows } = await pool.query(
-      `UPDATE mentorship_requests
-       SET status='REJECTED', queue_position=NULL
-       WHERE id=$1 AND alumni_id=$2 AND status='PENDING'
-       RETURNING student_id`,
+      `
+      UPDATE mentorship_requests
+      SET status='REJECTED',
+          queue_position=NULL,
+          last_action_at = NOW()
+      WHERE id=$1 AND alumni_id=$2 AND status='PENDING'
+      RETURNING student_id
+      `,
       [requestId, alumniId]
     );
-    if (!resultRows.length) return res.status(404).json({ message: "Request not found" });
+
+    if (!resultRows.length) {
+      return res.status(404).json({ message: "Request not found" });
+    }
 
     const studentId = resultRows[0].student_id;
 
     await pool.query(
-      `INSERT INTO notifications (user_id, type, message)
-       VALUES ($1,'MENTORSHIP_REJECTED','Your mentorship request has been rejected')`,
+      `
+      INSERT INTO notifications (user_id, type, message)
+      VALUES ($1, 'MENTORSHIP_REJECTED', 'Your mentorship request has been rejected')
+      `,
       [studentId]
     );
 
@@ -213,12 +348,14 @@ router.get("/my-requests", requireAuth("STUDENT"), async (req, res) => {
     const studentId = req.user.id;
 
     const { rows } = await pool.query(
-      `SELECT m.id, m.status, m.created_at,
-              u.name AS alumni_name, u.email AS alumni_email
-       FROM mentorship_requests m
-       JOIN users u ON u.id = m.alumni_id
-       WHERE m.student_id=$1
-       ORDER BY m.created_at DESC`,
+      `
+      SELECT m.id, m.status, m.created_at,
+             u.name AS alumni_name, u.email AS alumni_email
+      FROM mentorship_requests m
+      JOIN users u ON u.id = m.alumni_id
+      WHERE m.student_id=$1
+      ORDER BY m.created_at DESC
+      `,
       [studentId]
     );
 
@@ -237,12 +374,14 @@ router.get("/accepted", requireAuth("ALUMNI"), async (req, res) => {
     const alumniId = req.user.id;
 
     const { rows } = await pool.query(
-      `SELECT m.id, m.created_at,
-              u.name AS student_name, u.email AS student_email
-       FROM mentorship_requests m
-       JOIN users u ON u.id = m.student_id
-       WHERE m.alumni_id=$1 AND m.status='ACCEPTED'
-       ORDER BY m.created_at DESC`,
+      `
+      SELECT m.id, m.created_at,
+             u.name AS student_name, u.email AS student_email
+      FROM mentorship_requests m
+      JOIN users u ON u.id = m.student_id
+      WHERE m.alumni_id=$1 AND m.status='ACCEPTED'
+      ORDER BY m.created_at DESC
+      `,
       [alumniId]
     );
 

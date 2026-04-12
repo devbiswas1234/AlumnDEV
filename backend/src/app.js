@@ -11,6 +11,7 @@ import notificationRoutes from "./routes/notifications.js";
 
 // Routes
 import authRoutes from "./routes/auth.js";
+import analyticsRoutes from "./routes/analytics.js";
 
 dotenv.config();
 
@@ -30,7 +31,7 @@ app.use("/api/jobs", jobRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/notifications", notificationRoutes);
-
+app.use("/api/analytics", analyticsRoutes);
 
 app.get("/", (req, res) => {
   res.send("Alumni Platform Backend Running ✅");

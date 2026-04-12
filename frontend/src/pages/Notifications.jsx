@@ -29,28 +29,28 @@ export default function Notifications() {
     fetchNotifications();
   }, []);
 
-  if (loading) return <p className="p-6">Loading...</p>;
+  if (loading) return <p className="p-6 text-gray-400">Loading...</p>;
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Notifications</h1>
+    <div className="p-6 max-w-3xl mx-auto">
+      <h1 className="text-2xl font-bold mb-6 text-white">Notifications</h1>
 
-      {notifications.length === 0 && <p>No notifications yet</p>}
+      {notifications.length === 0 && <p className="text-gray-400">No notifications yet</p>}
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         {notifications.map((n) => (
           <div
             key={n.id}
-            className={`p-4 border rounded flex justify-between items-center ${
-              n.is_read ? "bg-gray-50" : "bg-blue-50"
+            className={`p-5 rounded-lg border shadow-sm flex justify-between items-center transition-colors ${
+              n.is_read ? "bg-gray-800 border-gray-700 text-gray-400" : "bg-blue-900/30 border-blue-800 text-white"
             }`}
           >
-            <p className="font-medium">{n.message}</p>
+            <p className={`font-medium ${n.is_read ? 'text-gray-400' : 'text-blue-50'}`}>{n.message}</p>
 
             {!n.is_read && (
               <button
                 onClick={() => markAsRead(n.id)}
-                className="text-sm text-blue-600"
+                className="text-sm text-blue-400 hover:text-blue-300 transition-colors ml-4 whitespace-nowrap"
               >
                 Mark as read
               </button>

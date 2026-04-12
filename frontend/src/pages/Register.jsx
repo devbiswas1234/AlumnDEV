@@ -40,9 +40,9 @@ export default function Register() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="max-w-md mx-auto mt-20 p-6 bg-white shadow rounded space-y-3"
+      className="max-w-md mx-auto mt-20 p-8 bg-gray-800 border border-gray-700 shadow-xl rounded-lg space-y-4"
     >
-      <h2 className="text-xl font-bold">Register</h2>
+      <h2 className="text-2xl font-bold text-center text-white mb-2">Register</h2>
 
       <input name="name" placeholder="Name" className="input" onChange={handleChange} />
       <input name="email" placeholder="Email" className="input" onChange={handleChange} />
@@ -57,7 +57,7 @@ export default function Register() {
       <input name="degree" placeholder="Degree" className="input" onChange={handleChange} />
       <input name="location" placeholder="Location" className="input" onChange={handleChange} />
 
-      <button className="w-full bg-blue-600 text-white p-2 rounded">
+      <button className="w-full bg-blue-600 hover:bg-blue-700 text-white p-2.5 rounded-md font-medium transition-colors mt-2">
         Register
       </button>
     </form>
